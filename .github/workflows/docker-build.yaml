@@ -53,11 +53,15 @@ jobs:
             type=sha,prefix=,suffix=,format=short
             latest
 
-      - name: Build Docker image (debug)
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Test Go build directly
         run: |
-          set -x
-          docker build --progress=plain -t test-build . 2>&1 || true
-        continue-on-error: true
+          go mod download
+          CGO_ENABLED=0 go build -v -o glance . 2>&1
 
       - name: Build and push Docker image
         id: build-and-push
