@@ -4,13 +4,13 @@ WORKDIR /app
 COPY . /app
 
 # 调试信息
-RUN echo "=== Go version ===" && go version
-RUN echo "=== Go mod ===" && cat go.mod
-RUN echo "=== Directory structure ===" && ls -la
+RUN go version
+RUN go env GOPROXY
+RUN ls -la
 
 # 先下载依赖，再构建
 RUN go mod download
-RUN echo "=== Building ===" && CGO_ENABLED=0 go build -v -o glance . 2>&1 || (echo "=== Build failed ===" && exit 1)
+RUN CGO_ENABLED=0 go build -v -o glance . || (echo "BUILD_FAILED" && cat /dev/null && exit 1)
 
 FROM alpine:3.21
 
