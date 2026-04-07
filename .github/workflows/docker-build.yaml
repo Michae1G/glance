@@ -53,6 +53,12 @@ jobs:
             type=sha,prefix=,suffix=,format=short
             latest
 
+      - name: Build Docker image (with detailed logs)
+        run: |
+          docker build --progress=plain -t test-build . 2>&1 | tee build.log
+          cat build.log
+        continue-on-error: true
+
       - name: Build and push Docker image
         id: build-and-push
         uses: docker/build-push-action@v5
@@ -63,15 +69,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          build-args: |
-            BUILDKIT_PROGRESS=plain
-          outputs: type=docker,dest=/tmp/image.tar
-
-      - name: Load and test image
-        run: |
-          docker load -i /tmp/image.tar
-          docker images
-          docker run --rm glance-optimized:latest --version || true
 
       - name: Output image digest
         run: echo "Image digest - ${{ steps.build-and-push.outputs.digest }}"
