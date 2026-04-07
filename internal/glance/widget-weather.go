@@ -5,11 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
-	"math"
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 	"time"
 
 	_ "time/tzdata"
@@ -196,7 +194,7 @@ func fetchQWeatherLocation(location string) (*qweatherLocation, error) {
 // fetchQWeatherForLocation fetches weather data from QWeather API
 func fetchQWeatherForLocation(loc *qweatherLocation) (*weather, error) {
 	// Fetch current weather
-	nowUrl := fmt.Sprintf("%s?location=%s&key=%s", qweatherNowAPI, loc.ID, qweatherAPIKey)
+	nowUrl := fmt.Sprintf("%s?location=%s&key=%s", qweatherNowAPI, loc.ID, getQWeatherAPIKey())
 	nowRequest, _ := http.NewRequest("GET", nowUrl, nil)
 	nowResponse, err := decodeJsonFromRequest[qweatherNowResponse](defaultHTTPClient, nowRequest)
 	if err != nil {
