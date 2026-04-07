@@ -163,7 +163,7 @@ type weatherColumn struct {
 
 // fetchQWeatherLocation looks up location by name using QWeather API
 func fetchQWeatherLocation(location string) (*qweatherLocation, error) {
-	requestUrl := fmt.Sprintf("%s?location=%s&key=%s", qweatherGeoAPI, url.QueryEscape(location), qweatherAPIKey)
+	requestUrl := fmt.Sprintf("%s?location=%s&key=%s", qweatherGeoAPI, url.QueryEscape(location), getQWeatherAPIKey())
 	request, _ := http.NewRequest("GET", requestUrl, nil)
 	responseJson, err := decodeJsonFromRequest[qweatherLocationResponse](defaultHTTPClient, request)
 	if err != nil {
