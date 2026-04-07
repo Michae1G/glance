@@ -53,10 +53,10 @@ jobs:
             type=sha,prefix=,suffix=,format=short
             latest
 
-      - name: Build Docker image (with detailed logs)
+      - name: Build Docker image (debug)
         run: |
-          docker build --progress=plain -t test-build . 2>&1 | tee build.log
-          cat build.log
+          set -x
+          docker build --progress=plain -t test-build . 2>&1 || true
         continue-on-error: true
 
       - name: Build and push Docker image
