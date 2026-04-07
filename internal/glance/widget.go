@@ -43,12 +43,14 @@ func newWidget(widgetType string) (widget, error) {
 		w = &hackerNewsWidget{}
 	case "releases":
 		w = &releasesWidget{}
-	case "videos":
-		w = &videosWidget{}
+	// REMOVED: videos widget (YouTube)
+	// case "videos":
+	// 	w = &videosWidget{}
 	case "markets", "stocks":
 		w = &marketsWidget{}
-	case "reddit":
-		w = &redditWidget{}
+	// REMOVED: reddit widget
+	// case "reddit":
+	// 	w = &redditWidget{}
 	case "rss":
 		w = &rssWidget{}
 	case "monitor":

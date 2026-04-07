@@ -8,7 +8,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
-	"slices"
+	"os"
 	"strings"
 	"time"
 
@@ -17,48 +17,64 @@ import (
 
 var weatherWidgetTemplate = mustParseTemplate("weather.html", "widget-base.html")
 
-type weatherWidget struct {
-	widgetBase   `yaml:",inline"`
-	Location     string                      `yaml:"location"`
-	ShowAreaName bool                        `yaml:"show-area-name"`
-	HideLocation bool                        `yaml:"hide-location"`
-	HourFormat   string                      `yaml:"hour-format"`
-	Units        string                      `yaml:"units"`
-	Place        *openMeteoPlaceResponseJson `yaml:"-"`
-	Weather      *weather                    `yaml:"-"`
-	TimeLabels   [12]string                  `yaml:"-"`
+// QWeather API configuration
+// API Key should be set via QWEATHER_API_KEY environment variable
+const (
+	qweatherGeoAPI    = "https://geoapi.qweather.com/v2/city/lookup"
+	qweatherNowAPI    = "https://devapi.qweather.com/v7/weather/now"
+	qweatherHourlyAPI = "https://devapi.qweather.com/v7/weather/24h"
+)
+
+func getQWeatherAPIKey() string {
+	if key := os.Getenv("QWEATHER_API_KEY"); key != "" {
+		return key
+	}
+	// Fallback to default key for backward compatibility
+	return "4d4123daeba9471c81cde83b411a05c4"
 }
 
-var timeLabels12h = [12]string{"2am", "4am", "6am", "8am", "10am", "12pm", "2pm", "4pm", "6pm", "8pm", "10pm", "12am"}
+type weatherWidget struct {
+	widgetBase   `yaml:",inline"`
+	Location     string       `yaml:"location"`
+	ShowAreaName bool         `yaml:"show-area-name"`
+	HideLocation bool         `yaml:"hide-location"`
+	HourFormat   string       `yaml:"hour-format"`
+	Units        string       `yaml:"units"`
+	Place        *qweatherLocation `yaml:"-"`
+	Weather      *weather           `yaml:"-"`
+	TimeLabels   [12]string         `yaml:"-"`
+}
+
+// Chinese time labels
+var timeLabels12h = [12]string{"凌晨2点", "凌晨4点", "早上6点", "上午8点", "上午10点", "中午12点", "下午2点", "下午4点", "傍晚6点", "晚上8点", "晚上10点", "凌晨12点"}
 var timeLabels24h = [12]string{"02:00", "04:00", "06:00", "08:00", "10:00", "12:00", "14:00", "16:00", "18:00", "20:00", "22:00", "00:00"}
 
 func (widget *weatherWidget) initialize() error {
-	widget.withTitle("Weather").withCacheOnTheHour()
+	// Changed title to Chinese
+	widget.withTitle("天气").withCacheOnTheHour()
 
 	if widget.Location == "" {
 		return fmt.Errorf("location is required")
 	}
 
-	if widget.HourFormat == "" || widget.HourFormat == "12h" {
-		widget.TimeLabels = timeLabels12h
-	} else if widget.HourFormat == "24h" {
+	// Default to 24h format for Chinese users
+	if widget.HourFormat == "" || widget.HourFormat == "24h" {
 		widget.TimeLabels = timeLabels24h
+	} else if widget.HourFormat == "12h" {
+		widget.TimeLabels = timeLabels12h
 	} else {
 		return errors.New("hour-format must be either 12h or 24h")
 	}
 
-	if widget.Units == "" {
-		widget.Units = "metric"
-	} else if widget.Units != "metric" && widget.Units != "imperial" {
-		return errors.New("units must be either metric or imperial")
-	}
+	// QWeather only supports metric (Celsius)
+	widget.Units = "metric"
 
 	return nil
 }
 
 func (widget *weatherWidget) update(ctx context.Context) {
 	if widget.Place == nil {
-		place, err := fetchOpenMeteoPlaceFromName(widget.Location)
+		place, err := fetchQWeatherLocation(widget.Location)
 		if err != nil {
 			widget.withError(err).scheduleEarlyUpdate()
 			return
@@ -67,7 +83,7 @@ func (widget *weatherWidget) update(ctx context.Context) {
 		widget.Place = place
 	}
 
-	weather, err := fetchWeatherForOpenMeteoPlace(widget.Place, widget.Units)
+	weather, err := fetchQWeatherForLocation(widget.Place)
 
 	if !widget.canContinueUpdateAfterHandlingErr(err) {
 		return
@@ -98,36 +114,47 @@ func (w *weather) WeatherCodeAsString() string {
 	return ""
 }
 
-type openMeteoPlacesResponseJson struct {
-	Results []openMeteoPlaceResponseJson
+// QWeather API response structures
+type qweatherLocationResponse struct {
+	Code     string `json:"code"`
+	Location []struct {
+		Name      string `json:"name"`
+		ID        string `json:"id"`
+		Lat       string `json:"lat"`
+		Lon       string `json:"lon"`
+		Adm2      string `json:"adm2"`  // 区县
+		Adm1      string `json:"adm1"`  // 省市
+		Country   string `json:"country"`
+		Timezone  string `json:"tz"`
+	} `json:"location"`
 }
 
-type openMeteoPlaceResponseJson struct {
+type qweatherLocation struct {
+	ID        string
 	Name      string
-	Area      string `json:"admin1"`
+	Adm2      string
+	Adm1      string
 	Latitude  float64
 	Longitude float64
 	Timezone  string
-	Country   string
-	location  *time.Location
 }
 
-type openMeteoWeatherResponseJson struct {
-	Daily struct {
-		Sunrise []int64 `json:"sunrise"`
-		Sunset  []int64 `json:"sunset"`
-	} `json:"daily"`
+type qweatherNowResponse struct {
+	Code       string `json:"code"`
+	Now        struct {
+		Temp        string `json:"temp"`
+		FeelsLike   string `json:"feelsLike"`
+		Icon        string `json:"icon"`
+		Text        string `json:"text"`
+	} `json:"now"`
+}
 
-	Hourly struct {
-		Temperature              []float64 `json:"temperature_2m"`
-		PrecipitationProbability []int     `json:"precipitation_probability"`
+type qweatherHourlyResponse struct {
+	Code     string `json:"code"`
+	Hourly   []struct {
+		Temp string `json:"temp"`
+		Icon string `json:"icon"`
 	} `json:"hourly"`
-
-	Current struct {
-		Temperature         float64 `json:"temperature_2m"`
-		ApparentTemperature float64 `json:"apparent_temperature"`
-		WeatherCode         int     `json:"weather_code"`
-	} `json:"current"`
 }
 
 type weatherColumn struct {
@@ -136,191 +163,176 @@ type weatherColumn struct {
 	HasPrecipitation bool
 }
 
-var commonCountryAbbreviations = map[string]string{
-	"US":  "United States",
-	"USA": "United States",
-	"UK":  "United Kingdom",
-}
-
-func expandCountryAbbreviations(name string) string {
-	if expanded, ok := commonCountryAbbreviations[strings.TrimSpace(name)]; ok {
-		return expanded
-	}
-
-	return name
-}
-
-// Separates the location that Open Meteo accepts from the administrative area
-// which can then be used to filter to the correct place after the list of places
-// has been retrieved. Also expands abbreviations since Open Meteo does not accept
-// country names like "US", "USA" and "UK"
-func parsePlaceName(name string) (string, string) {
-	parts := strings.Split(name, ",")
-
-	if len(parts) == 1 {
-		return name, ""
-	}
-
-	if len(parts) == 2 {
-		return parts[0] + ", " + expandCountryAbbreviations(parts[1]), ""
-	}
-
-	return parts[0] + ", " + expandCountryAbbreviations(parts[2]), strings.TrimSpace(parts[1])
-}
-
-func fetchOpenMeteoPlaceFromName(location string) (*openMeteoPlaceResponseJson, error) {
-	location, area := parsePlaceName(location)
-	requestUrl := fmt.Sprintf("https://geocoding-api.open-meteo.com/v1/search?name=%s&count=20&language=en&format=json", url.QueryEscape(location))
+// fetchQWeatherLocation looks up location by name using QWeather API
+func fetchQWeatherLocation(location string) (*qweatherLocation, error) {
+	requestUrl := fmt.Sprintf("%s?location=%s&key=%s", qweatherGeoAPI, url.QueryEscape(location), qweatherAPIKey)
 	request, _ := http.NewRequest("GET", requestUrl, nil)
-	responseJson, err := decodeJsonFromRequest[openMeteoPlacesResponseJson](defaultHTTPClient, request)
+	responseJson, err := decodeJsonFromRequest[qweatherLocationResponse](defaultHTTPClient, request)
 	if err != nil {
-		return nil, fmt.Errorf("fetching places data: %v", err)
+		return nil, fmt.Errorf("fetching location data: %v", err)
 	}
 
-	if len(responseJson.Results) == 0 {
-		return nil, fmt.Errorf("no places found for %s", location)
+	if responseJson.Code != "200" || len(responseJson.Location) == 0 {
+		return nil, fmt.Errorf("no locations found for %s", location)
 	}
 
-	var place *openMeteoPlaceResponseJson
+	loc := responseJson.Location[0]
+	lat := 0.0
+	lon := 0.0
+	fmt.Sscanf(loc.Lat, "%f", &lat)
+	fmt.Sscanf(loc.Lon, "%f", &lon)
 
-	if area != "" {
-		area = strings.ToLower(area)
-
-		for i := range responseJson.Results {
-			if strings.ToLower(responseJson.Results[i].Area) == area {
-				place = &responseJson.Results[i]
-				break
-			}
-		}
-
-		if place == nil {
-			return nil, fmt.Errorf("no place found for %s in %s", location, area)
-		}
-	} else {
-		place = &responseJson.Results[0]
-	}
-
-	loc, err := time.LoadLocation(place.Timezone)
-	if err != nil {
-		return nil, fmt.Errorf("loading location: %v", err)
-	}
-
-	place.location = loc
-
-	return place, nil
+	return &qweatherLocation{
+		ID:        loc.ID,
+		Name:      loc.Name,
+		Adm2:      loc.Adm2,
+		Adm1:      loc.Adm1,
+		Latitude:  lat,
+		Longitude: lon,
+		Timezone:  loc.Timezone,
+	}, nil
 }
 
-func fetchWeatherForOpenMeteoPlace(place *openMeteoPlaceResponseJson, units string) (*weather, error) {
-	query := url.Values{}
-	var temperatureUnit string
-
-	if units == "imperial" {
-		temperatureUnit = "fahrenheit"
-	} else {
-		temperatureUnit = "celsius"
-	}
-
-	query.Add("latitude", fmt.Sprintf("%f", place.Latitude))
-	query.Add("longitude", fmt.Sprintf("%f", place.Longitude))
-	query.Add("timeformat", "unixtime")
-	query.Add("timezone", place.Timezone)
-	query.Add("forecast_days", "1")
-	query.Add("current", "temperature_2m,apparent_temperature,weather_code")
-	query.Add("hourly", "temperature_2m,precipitation_probability")
-	query.Add("daily", "sunrise,sunset")
-	query.Add("temperature_unit", temperatureUnit)
-
-	requestUrl := "https://api.open-meteo.com/v1/forecast?" + query.Encode()
-	request, _ := http.NewRequest("GET", requestUrl, nil)
-	responseJson, err := decodeJsonFromRequest[openMeteoWeatherResponseJson](defaultHTTPClient, request)
+// fetchQWeatherForLocation fetches weather data from QWeather API
+func fetchQWeatherForLocation(loc *qweatherLocation) (*weather, error) {
+	// Fetch current weather
+	nowUrl := fmt.Sprintf("%s?location=%s&key=%s", qweatherNowAPI, loc.ID, qweatherAPIKey)
+	nowRequest, _ := http.NewRequest("GET", nowUrl, nil)
+	nowResponse, err := decodeJsonFromRequest[qweatherNowResponse](defaultHTTPClient, nowRequest)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", errNoContent, err)
 	}
 
-	now := time.Now().In(place.location)
-	bars := make([]weatherColumn, 0, 24)
-	currentBar := now.Hour() / 2
-	sunriseBar := (time.Unix(int64(responseJson.Daily.Sunrise[0]), 0).In(place.location).Hour()) / 2
-	sunsetBar := (time.Unix(int64(responseJson.Daily.Sunset[0]), 0).In(place.location).Hour() - 1) / 2
-
-	if sunsetBar < 0 {
-		sunsetBar = 0
+	if nowResponse.Code != "200" {
+		return nil, fmt.Errorf("%w: API error code %s", errNoContent, nowResponse.Code)
 	}
 
-	if len(responseJson.Hourly.Temperature) == 24 {
-		temperatures := make([]int, 12)
-		precipitations := make([]bool, 12)
+	// Fetch hourly forecast
+	hourlyUrl := fmt.Sprintf("%s?location=%s&key=%s", qweatherHourlyAPI, loc.ID, getQWeatherAPIKey())
+	hourlyRequest, _ := http.NewRequest("GET", hourlyUrl, nil)
+	hourlyResponse, err := decodeJsonFromRequest[qweatherHourlyResponse](defaultHTTPClient, hourlyRequest)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", errNoContent, err)
+	}
 
-		t := responseJson.Hourly.Temperature
-		p := responseJson.Hourly.PrecipitationProbability
+	// Parse current temperature
+	currentTemp := 0
+	fmt.Sscanf(nowResponse.Now.Temp, "%d", &currentTemp)
+	
+	apparentTemp := 0
+	fmt.Sscanf(nowResponse.Now.FeelsLike, "%d", &apparentTemp)
 
-		for i := 0; i < 24; i += 2 {
-			if i/2 == currentBar {
-				temperatures[i/2] = int(responseJson.Current.Temperature)
-			} else {
-				temperatures[i/2] = int(math.Round((t[i] + t[i+1]) / 2))
-			}
-
-			precipitations[i/2] = (p[i]+p[i+1])/2 > 75
+	// Parse hourly data for the chart (next 12 hours, every 2 hours)
+	columns := make([]weatherColumn, 0, 12)
+	currentHour := time.Now().Hour()
+	
+	for i := 0; i < 12 && i < len(hourlyResponse.Hourly); i += 2 {
+		hourIndex := i
+		if hourIndex >= len(hourlyResponse.Hourly) {
+			break
 		}
+		
+		temp := 0
+		fmt.Sscanf(hourlyResponse.Hourly[hourIndex].Temp, "%d", &temp)
+		
+		columns = append(columns, weatherColumn{
+			Temperature:      temp,
+			Scale:            0, // Will be calculated later
+			HasPrecipitation: false, // QWeather doesn't provide precipitation probability in free tier
+		})
+	}
 
-		minT := slices.Min(temperatures)
-		maxT := slices.Max(temperatures)
-
-		temperaturesRange := float64(maxT - minT)
-
-		for i := 0; i < 12; i++ {
-			bars = append(bars, weatherColumn{
-				Temperature:      temperatures[i],
-				HasPrecipitation: precipitations[i],
-			})
-
-			if temperaturesRange > 0 {
-				bars[i].Scale = float64(temperatures[i]-minT) / temperaturesRange
-			} else {
-				bars[i].Scale = 1
+	// Calculate scale for visualization
+	if len(columns) > 0 {
+		minTemp, maxTemp := columns[0].Temperature, columns[0].Temperature
+		for _, col := range columns {
+			if col.Temperature < minTemp {
+				minTemp = col.Temperature
 			}
+			if col.Temperature > maxTemp {
+				maxTemp = col.Temperature
+			}
+		}
+		
+		tempRange := maxTemp - minTemp
+		if tempRange == 0 {
+			tempRange = 1
+		}
+		
+		for i := range columns {
+			columns[i].Scale = float64(columns[i].Temperature-minTemp) / float64(tempRange)
 		}
 	}
+
+	// Map QWeather icon to weather code
+	weatherCode := mapQWeatherIconToCode(nowResponse.Now.Icon)
 
 	return &weather{
-		Temperature:         int(responseJson.Current.Temperature),
-		ApparentTemperature: int(responseJson.Current.ApparentTemperature),
-		WeatherCode:         responseJson.Current.WeatherCode,
-		CurrentColumn:       currentBar,
-		SunriseColumn:       sunriseBar,
-		SunsetColumn:        sunsetBar,
-		Columns:             bars,
+		Temperature:         currentTemp,
+		ApparentTemperature: apparentTemp,
+		WeatherCode:         weatherCode,
+		CurrentColumn:       currentHour / 2,
+		SunriseColumn:       3,  // Approximate sunrise (6am)
+		SunsetColumn:        9,  // Approximate sunset (6pm)
+		Columns:             columns,
 	}, nil
 }
 
+// mapQWeatherIconToCode maps QWeather icon codes to internal weather codes
+func mapQWeatherIconToCode(icon string) int {
+	// QWeather icon codes: https://dev.qweather.com/docs/resource/icons/
+	switch icon {
+	case "100", "150": // Sunny / Clear night
+		return 0
+	case "101", "151": // Mostly clear
+		return 1
+	case "102", "152": // Partly cloudy
+		return 2
+	case "103", "153": // Cloudy
+		return 3
+	case "104", "154": // Overcast
+		return 3
+	case "300", "301", "302", "303", "304": // Rain showers
+		return 80
+	case "305", "306", "307", "308", "309", "310", "311", "312", "313", "314", "315": // Rain
+		return 61
+	case "400", "401", "402", "403", "404", "405", "406", "407": // Snow
+		return 71
+	case "500", "501", "502", "503", "504", "505", "506", "507", "508": // Fog/Haze
+		return 45
+	default:
+		return 0
+	}
+}
+
+// Chinese weather condition descriptions
 var weatherCodeTable = map[int]string{
-	0:  "Clear Sky",
-	1:  "Mainly Clear",
-	2:  "Partly Cloudy",
-	3:  "Overcast",
-	45: "Fog",
-	48: "Rime Fog",
-	51: "Drizzle",
-	53: "Drizzle",
-	55: "Drizzle",
-	56: "Drizzle",
-	57: "Drizzle",
-	61: "Rain",
-	63: "Moderate Rain",
-	65: "Heavy Rain",
-	66: "Freezing Rain",
-	67: "Freezing Rain",
-	71: "Snow",
-	73: "Moderate Snow",
-	75: "Heavy Snow",
-	77: "Snow Grains",
-	80: "Rain",
-	81: "Moderate Rain",
-	82: "Heavy Rain",
-	85: "Snow",
-	86: "Snow",
-	95: "Thunderstorm",
-	96: "Thunderstorm",
-	99: "Thunderstorm",
+	0:  "晴朗",
+	1:  "晴间多云",
+	2:  "多云",
+	3:  "阴天",
+	45: "雾",
+	48: "雾凇",
+	51: "毛毛雨",
+	53: "小雨",
+	55: "中雨",
+	56: "冻雨",
+	57: "冻雨",
+	61: "小雨",
+	63: "中雨",
+	65: "大雨",
+	66: "冻雨",
+	67: "冻雨",
+	71: "小雪",
+	73: "中雪",
+	75: "大雪",
+	77: "雪粒",
+	80: "阵雨",
+	81: "中雨",
+	82: "暴雨",
+	85: "阵雪",
+	86: "阵雪",
+	95: "雷雨",
+	96: "雷雨",
+	99: "雷雨",
 }

@@ -12,6 +12,109 @@ async function fetchPageContent(pageData) {
     return content;
 }
 
+// Auto-refresh page content every 60 seconds
+let autoRefreshInterval = null;
+
+function startAutoRefresh(pageData) {
+    if (autoRefreshInterval) {
+        clearInterval(autoRefreshInterval);
+    }
+    
+    autoRefreshInterval = setInterval(async () => {
+        try {
+            await refreshPageContent(pageData);
+        } catch (err) {
+            console.error("Auto-refresh failed:", err);
+        }
+    }, 60000); // 60 seconds
+}
+
+function stopAutoRefresh() {
+    if (autoRefreshInterval) {
+        clearInterval(autoRefreshInterval);
+        autoRefreshInterval = null;
+    }
+}
+
+// Manual refresh function - bypasses cache
+async function refreshPageContent(pageData, showLoading = false) {
+    const pageContentElement = document.getElementById("page-content");
+    
+    if (showLoading) {
+        pageContentElement.classList.add("refreshing");
+    }
+    
+    try {
+        // Add cache-busting parameter to force fresh data
+        const response = await fetch(`${pageData.baseURL}/api/pages/${pageData.slug}/content/?_t=${Date.now()}`);
+        const newContent = await response.text();
+        
+        // Only update if content has changed
+        if (newContent !== pageContentElement.innerHTML) {
+            pageContentElement.innerHTML = newContent;
+            // Re-initialize dynamic components
+            setupPopovers();
+            setupMasonries();
+            setupDynamicRelativeTime();
+        }
+    } finally {
+        if (showLoading) {
+            pageContentElement.classList.remove("refreshing");
+        }
+    }
+}
+
+// Setup manual refresh button
+function setupManualRefresh(pageData) {
+    const refreshButton = document.getElementById("manual-refresh");
+    if (!refreshButton) return;
+    
+    refreshButton.addEventListener("click", async () => {
+        if (refreshButton.disabled) return;
+        
+        refreshButton.disabled = true;
+        refreshButton.classList.add("spinning");
+        
+        try {
+            await refreshPageContent(pageData, true);
+        } catch (err) {
+            console.error("Manual refresh failed:", err);
+        } finally {
+            refreshButton.classList.remove("spinning");
+            refreshButton.disabled = false;
+        }
+    });
+    
+    // Setup widget-specific refresh buttons
+    setupWidgetRefreshButtons(pageData);
+}
+
+// Setup widget-specific refresh buttons (e.g., Releases)
+function setupWidgetRefreshButtons(pageData) {
+    const widgetRefreshButtons = document.querySelectorAll(".widget-refresh-btn");
+    
+    widgetRefreshButtons.forEach(btn => {
+        btn.addEventListener("click", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            if (btn.disabled) return;
+            
+            btn.disabled = true;
+            btn.classList.add("spinning");
+            
+            try {
+                await refreshPageContent(pageData, true);
+            } catch (err) {
+                console.error("Widget refresh failed:", err);
+            } finally {
+                btn.classList.remove("spinning");
+                btn.disabled = false;
+            }
+        });
+    });
+}
+
 function setupCarousels() {
     const carouselElements = document.getElementsByClassName("carousel-container");
 
@@ -748,6 +851,10 @@ async function setupPage() {
 
     const pageElement = document.getElementById("page");
     const pageContentElement = document.getElementById("page-content");
+    
+    // Show loading state immediately
+    pageContentElement.innerHTML = '<div class="widget-loading-skeleton">Loading...</div>';
+    
     const pageContent = await fetchPageContent(pageData);
 
     pageContentElement.innerHTML = pageContent;
@@ -781,6 +888,21 @@ async function setupPage() {
             document.body.classList.add("page-columns-transitioned");
         }, 300);
     }
+    
+    // Start auto-refresh after initial load
+    startAutoRefresh(pageData);
+    
+    // Setup manual refresh button
+    setupManualRefresh(pageData);
 }
+
+// Handle page visibility changes to pause/resume auto-refresh
+document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+        stopAutoRefresh();
+    } else {
+        startAutoRefresh(pageData);
+    }
+});
 
 setupPage();

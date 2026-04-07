@@ -29,7 +29,8 @@ type releasesWidget struct {
 }
 
 func (widget *releasesWidget) initialize() error {
-	widget.withTitle("Releases").withCacheDuration(2 * time.Hour)
+	// Increased cache duration from 2h to 6h to reduce API calls and improve loading speed
+	widget.withTitle("Releases").withCacheDuration(6 * time.Hour)
 
 	if widget.Limit <= 0 {
 		widget.Limit = 10
@@ -154,7 +155,8 @@ func (r *releaseRequest) UnmarshalYAML(node *yaml.Node) error {
 }
 
 func fetchLatestReleases(requests []*releaseRequest) (appReleaseList, error) {
-	job := newJob(fetchLatestReleaseTask, requests).withWorkers(20)
+	// Reduced workers from 20 to 5 to avoid overwhelming the network and reduce timeouts
+	job := newJob(fetchLatestReleaseTask, requests).withWorkers(5)
 	results, errs, err := workerPoolDo(job)
 	if err != nil {
 		return nil, err

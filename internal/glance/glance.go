@@ -269,6 +269,54 @@ func (p *page) updateOutdatedWidgets() {
 	wg.Wait()
 }
 
+// hasCachedData checks if any widget has cached data available
+func (p *page) hasCachedData() bool {
+	now := time.Now()
+
+	for w := range p.HeadWidgets {
+		if !p.HeadWidgets[w].requiresUpdate(&now) {
+			return true
+		}
+	}
+
+	for c := range p.Columns {
+		for w := range p.Columns[c].Widgets {
+			if !p.Columns[c].Widgets[w].requiresUpdate(&now) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// updateOutdatedWidgetsAsync updates widgets asynchronously without blocking
+func (p *page) updateOutdatedWidgetsAsync() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	now := time.Now()
+	ctx := context.Background()
+
+	for w := range p.HeadWidgets {
+		widget := p.HeadWidgets[w]
+		if !widget.requiresUpdate(&now) {
+			continue
+		}
+		go widget.update(ctx)
+	}
+
+	for c := range p.Columns {
+		for w := range p.Columns[c].Widgets {
+			widget := p.Columns[c].Widgets[w]
+			if !widget.requiresUpdate(&now) {
+				continue
+			}
+			go widget.update(ctx)
+		}
+	}
+}
+
 func (a *application) resolveUserDefinedAssetPath(path string) string {
 	if strings.HasPrefix(path, "/assets/") {
 		return a.Config.Server.BaseURL + path
@@ -353,7 +401,25 @@ func (a *application) handlePageContentRequest(w http.ResponseWriter, r *http.Re
 		page.mu.Lock()
 		defer page.mu.Unlock()
 
-		page.updateOutdatedWidgets()
+		// Check for force refresh parameter (manual refresh button)
+		forceRefresh := r.URL.Query().Get("_t") != ""
+
+		if forceRefresh {
+			// Force refresh - update all widgets synchronously
+			page.updateOutdatedWidgets()
+		} else {
+			// Check if we have any cached data available
+			hasCachedData := page.hasCachedData()
+
+			if hasCachedData {
+				// Return cached data immediately, update widgets in background
+				go page.updateOutdatedWidgetsAsync()
+			} else {
+				// No cache available, wait for widgets to update
+				page.updateOutdatedWidgets()
+			}
+		}
+
 		err = pageContentTemplate.Execute(&responseBytes, pageData)
 	}()
 

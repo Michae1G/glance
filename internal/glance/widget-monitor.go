@@ -35,7 +35,8 @@ type monitorWidget struct {
 }
 
 func (widget *monitorWidget) initialize() error {
-	widget.withTitle("Monitor").withCacheDuration(5 * time.Minute)
+	// Increased from 5min to 15min - status doesn't change that frequently
+	widget.withTitle("Monitor").withCacheDuration(15 * time.Minute)
 
 	return nil
 }
@@ -183,7 +184,8 @@ func fetchSiteStatusTask(statusRequest *SiteStatusRequest) (siteStatus, error) {
 }
 
 func fetchStatusForSites(requests []*SiteStatusRequest) ([]siteStatus, error) {
-	job := newJob(fetchSiteStatusTask, requests).withWorkers(20)
+	// Reduced workers from 20 to 5 to avoid overwhelming the network
+	job := newJob(fetchSiteStatusTask, requests).withWorkers(5)
 	results, _, err := workerPoolDo(job)
 	if err != nil {
 		return nil, err
