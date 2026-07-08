@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/mmcdole/gofeed"
-	gofeedext "github.com/mmcdole/gofeed/extensions"
 )
 
 var (
@@ -122,7 +121,6 @@ type rssFeedItem struct {
 	ChannelURL  string
 	Title       string
 	Link        string
-	ImageURL    string
 	Categories  []string
 	Description string
 	PublishedAt time.Time
@@ -309,18 +307,6 @@ func (widget *rssWidget) fetchItemsFromFeedTask(request rssFeedRequest) ([]rssFe
 			rssItem.ChannelName = feed.Title
 		}
 
-		if item.Image != nil {
-			rssItem.ImageURL = item.Image.URL
-		} else if url := findThumbnailInItemExtensions(item); url != "" {
-			rssItem.ImageURL = url
-		} else if feed.Image != nil {
-			if len(feed.Image.URL) > 0 && feed.Image.URL[0] == '/' {
-				rssItem.ImageURL = strings.TrimRight(feed.Link, "/") + feed.Image.URL
-			} else {
-				rssItem.ImageURL = feed.Image.URL
-			}
-		}
-
 		if item.PublishedParsed != nil {
 			rssItem.PublishedAt = *item.PublishedParsed
 		} else {
@@ -341,36 +327,6 @@ func (widget *rssWidget) fetchItemsFromFeedTask(request rssFeedRequest) ([]rssFe
 	}
 
 	return items, nil
-}
-
-func findThumbnailInItemExtensions(item *gofeed.Item) string {
-	media, ok := item.Extensions["media"]
-
-	if !ok {
-		return ""
-	}
-
-	return recursiveFindThumbnailInExtensions(media)
-}
-
-func recursiveFindThumbnailInExtensions(extensions map[string][]gofeedext.Extension) string {
-	for _, exts := range extensions {
-		for _, ext := range exts {
-			if ext.Name == "thumbnail" || ext.Name == "image" {
-				if url, ok := ext.Attrs["url"]; ok {
-					return url
-				}
-			}
-
-			if ext.Children != nil {
-				if url := recursiveFindThumbnailInExtensions(ext.Children); url != "" {
-					return url
-				}
-			}
-		}
-	}
-
-	return ""
 }
 
 var htmlTagsWithAttributesPattern = regexp.MustCompile(`<\/?[a-zA-Z0-9-]+ *(?:[a-zA-Z-]+=(?:"|').*?(?:"|') ?)* *\/?>`)
